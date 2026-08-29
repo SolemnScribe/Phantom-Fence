@@ -2,7 +2,7 @@
 
 A tiny Windows system-tray app that keeps windows and the mouse cursor off "phantom" displays — displays that Windows thinks exist (e.g. one created by an AV receiver's HDMI connection) but that have no real screen attached. The display stays enabled, so audio to the device keeps working; PhantomFence just makes sure nothing ever lands on it.
 
-Single static exe (~220 KB), no installer, no runtime dependencies, a few MB of RAM. Config is stored under `HKCU\Software\PhantomFence`.
+Single static exe (~220 KB), no data collection, no network access, no runtime dependencies, a few MB of RAM. Config is stored under `HKCU\Software\PhantomFence`.
 
 ## Usage
 
