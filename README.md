@@ -66,7 +66,7 @@ Everything is in `src/PhantomFence.cpp` plus a small resource script (icon + ver
 
 Phantom Fence is free software, released under the **GNU General Public License, version 3 or (at your option) any later version** — see [LICENSE](LICENSE). Free as in freedom: you may run, study, modify, and redistribute it, including the changes you make, under the same license.
 
-Official prebuilt binaries are sold, for convenience, on [itch.io](https://solemn-scribe.itch.io/phantom-fence) and in the Microsoft Store. Every shipped binary version corresponds to a release tag in this repository, which is the corresponding source for GPL purposes. Buying a binary supports development; building your own from this source is equally legitimate.
+Official prebuilt binaries are sold, for convenience, on [itch.io](https://solemn-scribe.itch.io/phantom-fence) and in the [Microsoft Store](https://apps.microsoft.com/detail/9pcf0x620dbr). Every shipped binary version corresponds to a release tag in this repository, which is the corresponding source for GPL purposes. Buying a binary supports development; building your own from this source is equally legitimate.
 
 The "Phantom Fence" name and icon identify the official builds. The GPL licenses the code, not the trademark — redistributed or modified builds should use a different name and icon so users can tell them apart from official releases.
 
