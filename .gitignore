@@ -1,0 +1,14 @@
+# build outputs
+*.exe
+*.o
+*.msix
+Output/
+pkg/
+sdk-tools/
+# packaging staging copies & archives
+*.zip
+# signing material - never commit
+*.pfx
+*.cer
+# packaging directory - local builds only; purchase official binaries from the store
+packaging/
