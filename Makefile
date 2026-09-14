@@ -15,7 +15,18 @@ PhantomFence.exe: src/PhantomFence.cpp src/phantomfence_res.o
 src/phantomfence_res.o: src/PhantomFence.rc src/phantomfence.ico
 	$(WINDRES) -I src src/PhantomFence.rc src/phantomfence_res.o
 
-clean:
-	rm -f PhantomFence.exe src/phantomfence_res.o
+# Trial build: the 7-day evaluation binary offered as the free demo. The
+# expiry code is part of PhantomFence.cpp under #ifdef PF_TRIAL, as the GPL
+# requires for any binary that gets distributed. A plain `make` builds
+# without it.
+trial: CXXFLAGS += -DPF_TRIAL
+trial: PhantomFence-Trial.exe
 
-.PHONY: clean
+PhantomFence-Trial.exe: src/PhantomFence.cpp src/phantomfence_res.o
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LIBS)
+	$(STRIP) -s $@
+
+clean:
+	rm -f PhantomFence.exe PhantomFence-Trial.exe src/phantomfence_res.o
+
+.PHONY: clean trial
