@@ -2,7 +2,7 @@
 
 A tiny Windows system-tray app that keeps windows and the mouse cursor off "phantom" displays — displays that Windows thinks exist (e.g. one created by an AV receiver's HDMI connection) but that have no real screen attached. The display stays enabled, so audio to the device keeps working; PhantomFence just makes sure nothing ever lands on it.
 
-Single static exe (~220 KB), no data collection, no network access, no runtime dependencies, a few MB of RAM. Config is stored under `HKCU\Software\PhantomFence`.
+Single static exe (~240 KB), no data collection, no network access, no runtime dependencies, a few MB of RAM. Config is stored under `HKCU\Software\PhantomFence`.
 
 ## Usage
 
@@ -24,7 +24,7 @@ Single static exe (~220 KB), no data collection, no network access, no runtime d
 - Maximized windows found on the phantom display are re-anchored and re-maximized on the target monitor.
 - Window moves that can't be intercepted (an app's own "move to display" menu, third-party tools, Alt+Space keyboard moves) still land on the phantom briefly and are caught by auto-rescue.
 - Windows being actively dragged by the user are never touched (the sweep skips windows in a move/size loop).
-- **The primary display can never be fenced** — the taskbar and the tray icon live there, and fencing it would lock you out of the menu that could undo it. It shows greyed-out in the menu, and if you make a currently-fenced display the primary in Windows Settings, it is automatically (and permanently) unfenced, with a notification.
+- **The primary display is never fenced, but the fence is remembered.** The taskbar and the tray icon live on the primary, so fencing it would lock you out of the menu that could undo it; an unfenced primary shows greyed-out in the menu. If a display you have already fenced *becomes* the primary, its fence is **suspended rather than forgotten** — the display behaves normally so windows and the mouse can always be recovered there, the menu lists it as "(primary - fence suspended)", and the fence re-applies by itself the moment the display stops being primary, with no confirmation prompt. This matters because display reinitialization (boot, wake from sleep) routinely parks the primary on a phantom display for a few seconds before Windows restores the real one — forgetting the fence there would silently discard a setting you deliberately made. A suspended fence stays clickable in the menu, so you can clear it at any time.
 - **Fencing requires countdown confirmation.** A new fence takes effect immediately, but a "Keep fenced / Undo now" dialog appears on the nearest real display, and the fence auto-reverts after 15 seconds unless you confirm — the same pattern as Windows' "Keep these display settings?" prompt. If you accidentally fence the only display you can see, the dialog lands somewhere invisible and everything reverts on its own. Nothing is saved until you confirm, so even a reboot mid-countdown comes back unfenced.
 - Display hot-plug / resolution changes (`WM_DISPLAYCHANGE`) re-evaluate everything immediately.
 - Only one instance runs at a time; if Explorer restarts, the tray icon re-registers itself.

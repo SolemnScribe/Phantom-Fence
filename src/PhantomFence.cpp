@@ -101,7 +101,8 @@ struct MonitorEntry {
     std::wstring gdiName;     // \\.\DISPLAY1
     std::wstring deviceId;    // stable device-interface ID (or gdiName fallback)
     std::wstring friendly;    // "DENON-AVR" etc., may be empty
-    bool         fenced;
+    bool         fenced;       // enforced right now
+    bool         remembered;   // user's persisted intent to fence this display
     bool         primary;
 };
 
@@ -292,8 +293,9 @@ static BOOL CALLBACK MonEnumProc(HMONITOR hmon, HDC, LPRECT, LPARAM lp) {
     e.rc      = mi.rcMonitor;
     e.rcWork  = mi.rcWork;
     e.gdiName = mi.szDevice;
-    e.primary = (mi.dwFlags & MONITORINFOF_PRIMARY) != 0;
-    e.fenced  = false;
+    e.primary    = (mi.dwFlags & MONITORINFOF_PRIMARY) != 0;
+    e.fenced     = false;
+    e.remembered = false;
 
     DISPLAY_DEVICEW dd = {};
     dd.cb = sizeof(dd);
@@ -318,33 +320,35 @@ static void RefreshMonitors() {
                   return a.gdiName < b.gdiName;
               });
 
-    // The primary display can never be fenced: the taskbar and this app's
-    // tray icon live there, and fencing it would lock the user out of the
-    // very menu that could undo it. If a fenced display has BECOME the
-    // primary (the user changed it in Settings), unfence it for good.
-    bool removedPrimary = false;
+    // The primary display is never fenced in practice: the taskbar and this
+    // app's tray icon live there, and fencing it would lock the user out of
+    // the very menu that could undo it. A fence remembered for a display that
+    // BECOMES the primary is therefore SUSPENDED, not forgotten — it stays in
+    // the persisted list but is not enforced, so windows and the mouse can
+    // always be recovered there. The moment the display stops being primary
+    // the fence re-applies on its own, with no confirmation prompt.
+    //
+    // Suspending rather than forgetting matters because display
+    // reinitialization (boot, wake from sleep) routinely parks the primary on
+    // a phantom for a few seconds before Windows restores the real one.
+    // Forgetting the fence there would silently discard a deliberate setting
+    // on nothing more than a transient topology glitch.
     for (const auto& m : g_monitors) {
-        if (!m.primary) continue;
-        auto it = std::find(g_fencedIds.begin(), g_fencedIds.end(), m.deviceId);
-        if (it != g_fencedIds.end()) {
-            g_fencedIds.erase(it);
-            removedPrimary = true;
+        // A pending (unconfirmed) fence is still voided: it must never be
+        // persisted for a display that is currently the primary.
+        if (m.primary && !g_pendingFenceId.empty() && g_pendingFenceId == m.deviceId) {
+            g_pendingFenceId.clear();
+            break;
         }
-        if (!g_pendingFenceId.empty() && g_pendingFenceId == m.deviceId)
-            g_pendingFenceId.clear();     // a pending fence is voided too
-    }
-    if (removedPrimary) {
-        RegWriteMultiSz(REG_FENCED, g_fencedIds);
-        TrayBalloon(APP_NAME,
-                    L"A fenced display became the primary display and was unfenced.");
     }
 
-    // Mark fenced from the persisted list plus any pending (unconfirmed) fence.
+    // remembered = the user's persisted intent; fenced = what is enforced now.
     for (auto& m : g_monitors) {
+        m.remembered = std::find(g_fencedIds.begin(), g_fencedIds.end(),
+                                 m.deviceId) != g_fencedIds.end();
         m.fenced = !m.primary &&
-                   (std::find(g_fencedIds.begin(), g_fencedIds.end(), m.deviceId)
-                        != g_fencedIds.end()
-                    || (!g_pendingFenceId.empty() && m.deviceId == g_pendingFenceId));
+                   (m.remembered ||
+                    (!g_pendingFenceId.empty() && m.deviceId == g_pendingFenceId));
     }
 
     // Rebuild the rect cache the mouse hook reads.
@@ -1057,7 +1061,9 @@ static std::wstring MonitorMenuLabel(const MonitorEntry& m, size_t index) {
 
     std::wstring label = L"Display " + num + L"   " + res;
     if (!m.friendly.empty()) label += L"   " + m.friendly;
-    if (m.primary) label += L"  (primary - can't be fenced)";
+    if (m.primary)
+        label += m.remembered ? L"  (primary - fence suspended)"
+                              : L"  (primary - can't be fenced)";
     return label;
 }
 
@@ -1072,8 +1078,13 @@ static void ShowTrayMenu() {
 
     for (size_t i = 0; i < g_monitors.size(); ++i) {
         UINT flags = MF_STRING;
-        if (g_monitors[i].fenced)  flags |= MF_CHECKED;
-        if (g_monitors[i].primary) flags |= MF_DISABLED | MF_GRAYED;
+        // Checked reflects the remembered intent, so a suspended fence still
+        // reads as "on" (the label says it is suspended).
+        if (g_monitors[i].fenced || g_monitors[i].remembered) flags |= MF_CHECKED;
+        // The primary can't be fenced, but a fence remembered for it must stay
+        // clickable — otherwise the setting is stuck until it stops being primary.
+        if (g_monitors[i].primary && !g_monitors[i].remembered)
+            flags |= MF_DISABLED | MF_GRAYED;
         AppendMenuW(menu, flags, IDM_DISPLAY_BASE + (UINT)i,
                     MonitorMenuLabel(g_monitors[i], i).c_str());
     }
@@ -1111,7 +1122,12 @@ static void ToggleDisplayFence(size_t index) {
     if (index >= g_monitors.size()) return;
     MonitorEntry& m = g_monitors[index];
 
-    if (!m.fenced) {
+    // Branch on the user's intent, not on what is enforced: a fence suspended
+    // because its display is currently primary is remembered but not fenced,
+    // and clicking it must clear the fence rather than try to re-apply it.
+    const bool isPending = !g_pendingFenceId.empty() && m.deviceId == g_pendingFenceId;
+
+    if (!m.remembered && !isPending) {
         if (m.primary) {          // belt & braces: the item is greyed anyway
             TrayBalloon(APP_NAME,
                         L"The primary display can't be fenced - the taskbar "
@@ -1130,7 +1146,7 @@ static void ToggleDisplayFence(size_t index) {
         SweepAll();               // show the effect right away
         ShowFenceConfirm(rc);
     } else {
-        if (!g_pendingFenceId.empty() && m.deviceId == g_pendingFenceId) {
+        if (isPending) {
             // Unchecking the pending fence = undo the countdown.
             if (g_confirmWnd) DestroyWindow(g_confirmWnd);
             g_pendingFenceId.clear();
@@ -1138,12 +1154,20 @@ static void ToggleDisplayFence(size_t index) {
             TrayBalloon(APP_NAME, L"Fence undone.");
             return;
         }
+        // Capture before RefreshMonitors(): it rebuilds g_monitors, so the
+        // reference m does not survive the call.
+        const bool wasSuspended = m.primary;
         g_fencedIds.erase(
             std::remove(g_fencedIds.begin(), g_fencedIds.end(), m.deviceId),
             g_fencedIds.end());
         RegWriteMultiSz(REG_FENCED, g_fencedIds);
         RefreshMonitors();
         SweepAll();
+        // Clearing a suspended fence changes nothing visible, so say so.
+        if (wasSuspended)
+            TrayBalloon(APP_NAME,
+                        L"Fence cleared for this display - it will no longer be "
+                        L"fenced when it stops being the primary display.");
     }
 }
 
