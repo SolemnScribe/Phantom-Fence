@@ -8,8 +8,8 @@
 1 ICON "phantomfence.ico"
 
 1 VERSIONINFO
-FILEVERSION     1,2,0,0
-PRODUCTVERSION  1,2,0,0
+FILEVERSION     1,2,1,0
+PRODUCTVERSION  1,2,1,0
 FILEFLAGSMASK   0x3fL
 FILEFLAGS       0x0L
 FILEOS          VOS_NT_WINDOWS32
@@ -22,12 +22,12 @@ BEGIN
     BEGIN
       VALUE "CompanyName",      "Solemn Scribe"
       VALUE "FileDescription",  "Phantom Fence - keeps windows and the mouse off phantom displays"
-      VALUE "FileVersion",      "1.2.0.0"
+      VALUE "FileVersion",      "1.2.1.0"
       VALUE "InternalName",     "PhantomFence"
       VALUE "LegalCopyright",   "(c) 2026 Solemn Scribe"
       VALUE "OriginalFilename", "PhantomFence.exe"
       VALUE "ProductName",      "Phantom Fence"
-      VALUE "ProductVersion",   "1.2.0.0"
+      VALUE "ProductVersion",   "1.2.1.0"
     END
   END
   BLOCK "VarFileInfo"
