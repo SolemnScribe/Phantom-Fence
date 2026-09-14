@@ -70,6 +70,23 @@ static const wchar_t* REG_HOTKEY    = L"HotkeySkip";       // DWORD
 static const wchar_t* REG_TBGUARD   = L"TaskbarAutoHideGuard"; // DWORD, default off
 static const wchar_t* RUN_KEY       = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
+// ------------------------------------------------------------------- trial
+//
+// Trial builds come from `make trial` (-DPF_TRIAL) and are the free demo
+// offered alongside the paid binaries. A trial is a convenience for people
+// evaluating Phantom Fence, NOT a security boundary: this program is GPLv3,
+// so a plain `make` produces an unrestricted binary and anyone may do that.
+// That is the licence working as intended, and the reason there is no
+// obfuscation, hidden state or tamper-checking below — it would cost
+// complexity and buy nothing. The expiry code lives in this file precisely
+// because the GPL requires the corresponding source for every binary that
+// gets distributed, the trial included.
+#ifdef PF_TRIAL
+static const wchar_t* REG_TRIAL  = L"TrialFirstRun";   // DWORD: day first run
+static const DWORD    TRIAL_DAYS = 7;
+static const wchar_t* BUY_URL    = L"https://solemn-scribe.itch.io/phantom-fence";
+#endif
+
 enum {
     WMAPP_TRAY         = WM_APP + 1,
     WMAPP_HOTMOVE      = WM_APP + 2,  // wParam: 1=right 0=left, lParam: HWND
@@ -87,6 +104,7 @@ enum {
     IDM_HEADER        = 6,
     IDM_TOGGLE_HOTKEY = 7,
     IDM_TOGGLE_TBGUARD = 8,
+    IDM_BUY           = 9,            // trial builds only
     IDM_DISPLAY_BASE  = 100,
 };
 
@@ -166,6 +184,57 @@ static void RegWriteDword(const wchar_t* name, DWORD val) {
     if (!hk) return;
     RegSetValueExW(hk, name, 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
     RegCloseKey(hk);
+}
+
+// ---------------------------------------------------------------- trial state
+
+#ifdef PF_TRIAL
+static DWORD g_trialStartDay   = 0;           // day the trial first ran
+static DWORD g_trialDaysLeft   = TRIAL_DAYS;  // 0 = expired
+static bool  g_trialExpiredMsg = false;       // latch: balloon expiry once
+
+// Whole days since the Windows epoch, UTC.
+static DWORD TrialTodayStamp() {
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER u;
+    u.LowPart  = ft.dwLowDateTime;
+    u.HighPart = ft.dwHighDateTime;
+    return (DWORD)(u.QuadPart / (10000000ULL * 60 * 60 * 24));
+}
+
+// Pure arithmetic against the cached start day, so the 2 s tick costs nothing.
+// A clock set backwards neither extends the trial nor re-stamps it: the
+// original start day stands, and the trial resumes once time catches up.
+static DWORD TrialComputeDaysLeft() {
+    const DWORD today = TrialTodayStamp();
+    if (today < g_trialStartDay) return TRIAL_DAYS;
+    const DWORD used = today - g_trialStartDay;
+    return (used >= TRIAL_DAYS) ? 0 : TRIAL_DAYS - used;
+}
+
+// Reads (and on the very first run writes) the trial start day. The registry
+// is touched only here, never on the tick.
+static void TrialInit() {
+    g_trialStartDay = RegReadDword(REG_TRIAL, 0);
+    if (g_trialStartDay == 0) {
+        g_trialStartDay = TrialTodayStamp();
+        RegWriteDword(REG_TRIAL, g_trialStartDay);
+    }
+    g_trialDaysLeft = TrialComputeDaysLeft();
+}
+#endif
+
+// Whether fencing is enforced at all. Always true in a normal build; in a
+// trial build this is the single choke point that makes an expired trial
+// inert. Note it gates only ENFORCEMENT — the user's fence list is left
+// untouched, so buying and installing the full build restores their setup.
+static bool FencingEnabled() {
+#ifdef PF_TRIAL
+    return g_trialDaysLeft > 0;
+#else
+    return true;
+#endif
 }
 
 static std::vector<std::wstring> RegReadMultiSz(const wchar_t* name) {
@@ -346,7 +415,7 @@ static void RefreshMonitors() {
     for (auto& m : g_monitors) {
         m.remembered = std::find(g_fencedIds.begin(), g_fencedIds.end(),
                                  m.deviceId) != g_fencedIds.end();
-        m.fenced = !m.primary &&
+        m.fenced = !m.primary && FencingEnabled() &&
                    (m.remembered ||
                     (!g_pendingFenceId.empty() && m.deviceId == g_pendingFenceId));
     }
@@ -906,6 +975,30 @@ static HICON CreateFenceIcon() {
     return icon;
 }
 
+// Fills g_nid.szTip only; does not talk to the shell.
+static void TrayFormatTip() {
+#ifdef PF_TRIAL
+    if (g_trialDaysLeft == 0)
+        swprintf(g_nid.szTip, ARRAYSIZE(g_nid.szTip), L"%ls - trial ended", APP_NAME);
+    else
+        swprintf(g_nid.szTip, ARRAYSIZE(g_nid.szTip), L"%ls - trial, %u day%ls left",
+                 APP_NAME, (unsigned)g_trialDaysLeft,
+                 g_trialDaysLeft == 1 ? L"" : L"s");
+#else
+    wcscpy_s(g_nid.szTip, ARRAYSIZE(g_nid.szTip), APP_NAME);
+#endif
+}
+
+#ifdef PF_TRIAL
+// Push a changed tooltip to an icon that already exists.
+static void TrayRefreshTip() {
+    TrayFormatTip();
+    NOTIFYICONDATAW nid = g_nid;
+    nid.uFlags = NIF_TIP;
+    Shell_NotifyIconW(NIM_MODIFY, &nid);
+}
+#endif
+
 static void TrayAdd() {
     g_nid = {};
     g_nid.cbSize = sizeof(g_nid);
@@ -914,7 +1007,7 @@ static void TrayAdd() {
     g_nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     g_nid.uCallbackMessage = WMAPP_TRAY;
     g_nid.hIcon = g_icon;
-    wcscpy_s(g_nid.szTip, ARRAYSIZE(g_nid.szTip), APP_NAME);
+    TrayFormatTip();
     Shell_NotifyIconW(NIM_ADD, &g_nid);
     g_nid.uVersion = NOTIFYICON_VERSION_4;
     Shell_NotifyIconW(NIM_SETVERSION, &g_nid);
@@ -1072,8 +1165,19 @@ static void ShowTrayMenu() {
 
     HMENU menu = CreatePopupMenu();
 
+#ifdef PF_TRIAL
+    wchar_t hdr[128];
+    if (g_trialDaysLeft == 0)
+        wcscpy_s(hdr, ARRAYSIZE(hdr), L"Trial ended - fencing is off. Buy to re-enable:");
+    else
+        swprintf(hdr, ARRAYSIZE(hdr),
+                 L"Trial - %u day%ls left. Fence a display:",
+                 (unsigned)g_trialDaysLeft, g_trialDaysLeft == 1 ? L"" : L"s");
+    AppendMenuW(menu, MF_STRING | MF_DISABLED | MF_GRAYED, IDM_HEADER, hdr);
+#else
     AppendMenuW(menu, MF_STRING | MF_DISABLED | MF_GRAYED, IDM_HEADER,
                 L"Fence a display to keep windows && mouse off it:");
+#endif
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     for (size_t i = 0; i < g_monitors.size(); ++i) {
@@ -1085,6 +1189,11 @@ static void ShowTrayMenu() {
         // clickable — otherwise the setting is stuck until it stops being primary.
         if (g_monitors[i].primary && !g_monitors[i].remembered)
             flags |= MF_DISABLED | MF_GRAYED;
+#ifdef PF_TRIAL
+        // An expired trial enforces nothing, so offering the toggle would
+        // just be a control that does nothing.
+        if (g_trialDaysLeft == 0) flags |= MF_DISABLED | MF_GRAYED;
+#endif
         AppendMenuW(menu, flags, IDM_DISPLAY_BASE + (UINT)i,
                     MonitorMenuLabel(g_monitors[i], i).c_str());
     }
@@ -1106,6 +1215,10 @@ static void ShowTrayMenu() {
         AppendMenuW(menu, MF_STRING | (AutostartEnabled() ? MF_CHECKED : 0),
                     IDM_AUTOSTART, L"Start with Windows");
     }
+#ifdef PF_TRIAL
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, IDM_BUY, L"Buy Phantom Fence...");
+#endif
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_EXIT, L"Exit");
 
@@ -1120,6 +1233,14 @@ static void ShowTrayMenu() {
 
 static void ToggleDisplayFence(size_t index) {
     if (index >= g_monitors.size()) return;
+#ifdef PF_TRIAL
+    // Belt & braces: the menu items are greyed when expired, but never let a
+    // fence change reach the registry once the trial is over.
+    if (g_trialDaysLeft == 0) {
+        TrayBalloon(APP_NAME, L"The trial has ended - fencing is off.");
+        return;
+    }
+#endif
     MonitorEntry& m = g_monitors[index];
 
     // Branch on the user's intent, not on what is enforced: a fence suspended
@@ -1171,6 +1292,30 @@ static void ToggleDisplayFence(size_t index) {
     }
 }
 
+#ifdef PF_TRIAL
+// Called from the sweep timer. The app is meant to run for weeks at a time,
+// so the trial cannot be evaluated only at startup — it has to notice the day
+// rolling over while it is running.
+static void TrialTick() {
+    const DWORD left = TrialComputeDaysLeft();
+    if (left == g_trialDaysLeft) return;
+
+    const bool justExpired = (left == 0 && g_trialDaysLeft > 0);
+    g_trialDaysLeft = left;
+    TrayRefreshTip();
+    RefreshMonitors();     // FencingEnabled() changed: drop enforcement
+    SweepAll();
+
+    if (justExpired && !g_trialExpiredMsg) {
+        g_trialExpiredMsg = true;
+        TrayBalloon(APP_NAME,
+                    L"The trial has ended and fencing is now off. Your fenced "
+                    L"displays are remembered - buy Phantom Fence to switch "
+                    L"fencing back on.");
+    }
+}
+#endif
+
 // ------------------------------------------------------------- window proc
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -1217,6 +1362,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_tbGuardOn = !g_tbGuardOn;
             RegWriteDword(REG_TBGUARD, g_tbGuardOn ? 1 : 0);
             GuardTaskbarAutoHide();       // enforce immediately on enable
+#ifdef PF_TRIAL
+        } else if (id == IDM_BUY) {
+            ShellExecuteW(nullptr, L"open", BUY_URL, nullptr, nullptr, SW_SHOWNORMAL);
+#endif
         }
         return 0;
     }
@@ -1248,7 +1397,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
 
     case WM_TIMER:
-        if (wParam == IDT_SWEEP) SweepAll();
+        if (wParam == IDT_SWEEP) {
+#ifdef PF_TRIAL
+            TrialTick();
+#endif
+            SweepAll();
+        }
         return 0;
 
     case WM_DESTROY:
@@ -1288,6 +1442,9 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     HKEY hkProbe     = OpenAppKey(false);
     bool firstRun    = (hkProbe == nullptr);
     if (hkProbe) RegCloseKey(hkProbe);
+#ifdef PF_TRIAL
+    TrialInit();   // after the probe above: this writes the key on first run
+#endif
 
     WNDCLASSW wc = {};
     wc.lpfnWndProc   = WndProc;
@@ -1314,6 +1471,19 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         TrayBalloon(APP_NAME,
                     L"Right-click the tray icon and pick the display(s) to fence.");
     }
+#ifdef PF_TRIAL
+    // Last, so it wins over the setup hint above: an expired trial makes that
+    // hint misleading. Silence on every other launch is deliberate — this app
+    // starts with Windows, and a nag on each boot would be noise. The day
+    // count lives in the tooltip and the menu header instead.
+    if (g_trialDaysLeft == 0) {
+        g_trialExpiredMsg = true;
+        TrayBalloon(APP_NAME,
+                    L"The trial has ended and fencing is off. Your fenced "
+                    L"displays are remembered - buy Phantom Fence to switch "
+                    L"fencing back on.");
+    }
+#endif
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {

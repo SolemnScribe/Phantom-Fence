@@ -62,6 +62,16 @@ cl /O1 /W4 /DUNICODE /D_UNICODE PhantomFence.cpp PhantomFence.res /link /SUBSYST
 
 Everything is in `src/PhantomFence.cpp` plus a small resource script (icon + version info). No manifest required — DPI awareness is set programmatically to Per-Monitor V2.
 
+### Trial build
+
+```
+make trial
+```
+
+produces `PhantomFence-Trial.exe`, the time-limited evaluation binary offered as the free demo alongside the paid builds. It is the same program compiled with `-DPF_TRIAL`, and it behaves identically for 7 days from the day it first runs. After that it stops enforcing fences: it stays in the tray, keeps your fenced displays in the configuration, and says so in its tooltip and menu. Nothing is deleted, so installing a full build picks your setup back up. The first-run day is stored as `TrialFirstRun` under `HKCU\Software\PhantomFence`.
+
+The trial is a convenience for people evaluating the app, **not a copy-protection measure**. A plain `make` builds an unrestricted binary, and under the GPL anyone is free to do exactly that — so there is deliberately no obfuscation or tamper-checking in the trial code. It lives in this repository rather than in a private branch because the GPL requires corresponding source for every binary that gets distributed, and the trial is one of them.
+
 ## License
 
 Phantom Fence is free software, released under the **GNU General Public License, version 3 or (at your option) any later version** — see [LICENSE](LICENSE). Free as in freedom: you may run, study, modify, and redistribute it, including the changes you make, under the same license.
